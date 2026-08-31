@@ -26,6 +26,19 @@ timeout \
   "${vinext}" build
 
 # Cloudflare Pages serves only dist/client. Vinext also emits a Worker
-# wrangler manifest under dist/server; leaving that manifest causes Pages to
-# validate Worker-only fields (main/assets/rules) and reject the deployment.
-rm -f "${SITES_PROJECT_ROOT}/dist/server/wrangler.json"
+# wrangler manifest under dist/server. Replace it with a minimal Pages config
+# so Cloudflare's post-build validator does not reject Worker-only fields
+# (main/assets/rules), while its redirected config path remains valid.
+pages_manifest="${SITES_PROJECT_ROOT}/dist/server/wrangler.json"
+node - "${pages_manifest}" <<'NODE'
+const fs = require("node:fs");
+const path = process.argv[2];
+fs.writeFileSync(
+  path,
+  `${JSON.stringify({
+    name: "layaa-client-portal",
+    compatibility_date: "2026-08-31",
+    pages_build_output_dir: "../client",
+  }, null, 2)}\n`,
+);
+NODE
