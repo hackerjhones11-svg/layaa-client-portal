@@ -24,3 +24,8 @@ timeout \
   --kill-after="${SITES_BUILD_KILL_AFTER:-10s}" \
   "${SITES_BUILD_TIMEOUT:-3m}" \
   "${vinext}" build
+
+# Cloudflare Pages serves only dist/client. Vinext also emits a Worker
+# wrangler manifest under dist/server; leaving that manifest causes Pages to
+# validate Worker-only fields (main/assets/rules) and reject the deployment.
+rm -f "${SITES_PROJECT_ROOT}/dist/server/wrangler.json"
