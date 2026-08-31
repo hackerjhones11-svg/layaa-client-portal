@@ -8,6 +8,7 @@ type Payload = { client?: Client; items?: Item[]; error?: string };
 
 const statuses = ["All", "Planned", "Shot", "Editing", "Waiting Client Approval", "Delivered", "Declined by CD"];
 const statusClass = (status: string) => status.toLowerCase().replace(/[^a-z]+/g, "-");
+const MAIN_CALENDAR_URL = "https://layaa-content-calendar.aavashrzxx.chatgpt.site";
 
 export default function Home() {
   const [data, setData] = useState<Payload | null>(null);
@@ -16,7 +17,15 @@ export default function Home() {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    fetch(`/api/client${window.location.search}`, { cache: "no-store" })
+    const params = new URLSearchParams(window.location.search);
+    const invite = String(params.get("invite") ?? "").trim();
+    if ((!params.get("clientId") || !params.get("token")) && invite.includes(".")) {
+      const separator = invite.indexOf(".");
+      params.set("clientId", params.get("clientId") || invite.slice(0, separator));
+      params.set("token", params.get("token") || invite.slice(separator + 1));
+    }
+    params.set("view", "client");
+    fetch(`${MAIN_CALENDAR_URL}/api/workspace?${params.toString()}`, { cache: "no-store" })
       .then(async (response) => { const body = (await response.json()) as Payload; if (!response.ok) throw new Error(body.error || "Unable to load calendar"); return body; })
       .then(setData)
       .catch((reason: unknown) => setError(reason instanceof Error ? reason.message : "Unable to load calendar"))
