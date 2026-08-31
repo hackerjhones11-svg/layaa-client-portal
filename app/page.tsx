@@ -6,7 +6,7 @@ type Client = { id: string; name: string; kind: string; target: number; split: s
 type Item = { id: number; dateKey: string | null; title: string; type: string; status: string; owner: string; notes: string; rawLink: string; finalLink: string };
 type Payload = { client?: Client; items?: Item[]; error?: string };
 
-const statuses = ["All", "Planned", "Shot", "Editing", "Waiting Client Approval", "Delivered", "Declined by CD"];
+const statuses = ["All", "Planned", "Shot", "Editing", "Waiting Client Approval", "Declined by Client (Need Revision)", "Delivered", "Declined by CD"];
 const statusClass = (status: string) => status.toLowerCase().replace(/[^a-z]+/g, "-");
 const MAIN_CALENDAR_URL = "https://layaa-content-calendar.aavashrzxx.chatgpt.site";
 
