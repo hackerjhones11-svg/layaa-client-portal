@@ -1,54 +1,127 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { FormEvent, useEffect, useMemo, useState } from "react";
 
-type Client = { id: string; name: string; kind: string; target: number; split: string; color: string; finalContentLink?: string };
-type Item = { id: number; dateKey: string | null; title: string; type: string; status: string; owner: string; notes: string; rawLink: string; finalLink: string };
-type Payload = { client?: Client; items?: Item[]; error?: string };
+type Client = { id: string; name: string; clientDisplayName: string; kind: string; target: number; split: string; color: string; finalContentLink?: string };
+type Item = { id: number; clientId: string; dateKey: string | null; title: string; type: string; status: string; finalLink: string };
+type Activity = { id: number; actorEmail: string; actorName: string; action: string; summary: string; createdAt: string };
+type Payload = { clients?: Client[]; items?: Item[]; activity?: Activity[]; session?: string; viewerEmail?: string; portalGroup?: string; error?: string };
+type Month = { key: string; label: string; gregorian: string; days: number; starts: number; englishStart: string };
 
-const statuses = ["All", "Planned", "Shot", "Editing", "Waiting Client Approval", "Declined by Client (Need Revision)", "Delivered", "Declined by CD"];
-const statusClass = (status: string) => status.toLowerCase().replace(/[^a-z]+/g, "-");
 const MAIN_CALENDAR_URL = "https://layaa-content-calendar.aavashrzxx.chatgpt.site";
+const months: Month[] = [
+  { key: "Bhadra", label: "Bhadra 2083", gregorian: "Aug / Sep 2026", days: 31, starts: 1, englishStart: "2026-08-17" },
+  { key: "Ashoj", label: "Ashoj 2083", gregorian: "Sep / Oct 2026", days: 31, starts: 4, englishStart: "2026-09-17" },
+  { key: "Kartik", label: "Kartik 2083", gregorian: "Oct / Nov 2026", days: 30, starts: 0, englishStart: "2026-10-18" },
+  { key: "Mangsir", label: "Mangsir 2083", gregorian: "Nov / Dec 2026", days: 30, starts: 2, englishStart: "2026-11-17" },
+  { key: "Poush", label: "Poush 2083", gregorian: "Dec 2026 / Jan 2027", days: 30, starts: 3, englishStart: "2026-12-17" },
+  { key: "Magh", label: "Magh 2083", gregorian: "Jan / Feb 2027", days: 29, starts: 5, englishStart: "2027-01-16" },
+  { key: "Falgun", label: "Falgun 2083", gregorian: "Feb / Mar 2027", days: 30, starts: 6, englishStart: "2027-02-14" },
+  { key: "Chaitra", label: "Chaitra 2083", gregorian: "Mar / Apr 2027", days: 30, starts: 1, englishStart: "2027-03-16" },
+  { key: "Baisakh", label: "Baisakh 2084", gregorian: "Apr / May 2027", days: 31, starts: 3, englishStart: "2027-04-15" },
+];
+const statuses = ["All", "Planned", "Script Ready", "Shot", "Editing", "Waiting Client Approval", "Declined by Client (Need Revision)", "Delivered", "Posted"];
+const statusClass = (status: string) => status.toLowerCase().replace(/[^a-z]+/g, "-");
+function englishDate(month: Month, day: number) { const date = new Date(`${month.englishStart}T00:00:00Z`); date.setUTCDate(date.getUTCDate() + day - 1); return date.toLocaleDateString("en-US", { month: "short", day: "numeric", timeZone: "UTC" }); }
+function formatLogTime(value: string) { const normalized = /[zZ]|[+-]\d\d:?\d\d$/.test(value) ? value : `${value.replace(" ", "T")}Z`; return `${new Date(normalized).toLocaleString("en-US", { timeZone: "Asia/Kathmandu", month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })} NPT`; }
 
 export default function Home() {
+  const [invite, setInvite] = useState({ clientId: "", token: "" });
   const [data, setData] = useState<Payload | null>(null);
+  const [email, setEmail] = useState("");
+  const [pin, setPin] = useState("");
   const [filter, setFilter] = useState("All");
+  const [activeClientId, setActiveClientId] = useState("");
+  const [monthIndex, setMonthIndex] = useState(0);
+  const [view, setView] = useState<"calendar" | "list">("calendar");
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(true);
+  const [loggingIn, setLoggingIn] = useState(false);
 
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
-    const invite = String(params.get("invite") ?? "").trim();
-    if ((!params.get("clientId") || !params.get("token")) && invite.includes(".")) {
-      const separator = invite.indexOf(".");
-      params.set("clientId", params.get("clientId") || invite.slice(0, separator));
-      params.set("token", params.get("token") || invite.slice(separator + 1));
-    }
-    params.set("view", "client");
-    fetch(`${MAIN_CALENDAR_URL}/api/workspace?${params.toString()}`, { cache: "no-store" })
-      .then(async (response) => { const body = (await response.json()) as Payload; if (!response.ok) throw new Error(body.error || "Unable to load calendar"); return body; })
-      .then(setData)
-      .catch((reason: unknown) => setError(reason instanceof Error ? reason.message : "Unable to load calendar"))
-      .finally(() => setLoading(false));
+    const raw = String(params.get("invite") || "").trim();
+    const separator = raw.indexOf(".");
+    const clientId = params.get("clientId") || (separator > 0 ? raw.slice(0, separator) : "");
+    const token = params.get("token") || (separator > 0 ? raw.slice(separator + 1) : "");
+    setInvite({ clientId, token });
+    if (!clientId || !token) { setError("This invite is not available. Please ask the Layaa team for a fresh link."); setLoading(false); return; }
+    const stored = window.localStorage.getItem(`layaa-portal-session:${clientId}`);
+    if (!stored) { setLoading(false); return; }
+    void fetchPortal(stored, clientId, token);
   }, []);
 
-  const items = data?.items ?? [];
-  const visibleItems = useMemo(() => filter === "All" ? items : items.filter((item) => item.status === filter), [items, filter]);
-  const delivered = items.filter((item) => ["Delivered", "Posted"].includes(item.status)).length;
-  const grouped = useMemo(() => { const groups = new Map<string, Item[]>(); visibleItems.forEach((item) => { const key = item.dateKey || "Unscheduled"; groups.set(key, [...(groups.get(key) ?? []), item]); }); return [...groups.entries()]; }, [visibleItems]);
+  async function fetchPortal(session: string, clientId = invite.clientId, token = invite.token) {
+    if (!clientId || !token) return;
+    setLoading(true); setError("");
+    try {
+      const response = await fetch(`${MAIN_CALENDAR_URL}/api/workspace?view=client&clientId=${encodeURIComponent(clientId)}&token=${encodeURIComponent(token)}`, { cache: "no-store", headers: { "X-Client-Portal-Session": session } });
+      const body = await response.json() as Payload;
+      if (!response.ok) throw new Error(body.error || "Unable to load your portal");
+      setData({ ...body, session });
+      setActiveClientId((current) => current || body.clients?.find((client) => client.id === clientId)?.id || body.clients?.[0]?.id || "");
+    } catch (reason) {
+      window.localStorage.removeItem(`layaa-portal-session:${clientId}`);
+      setData(null); setError(reason instanceof Error ? reason.message : "Unable to load your portal");
+    } finally { setLoading(false); }
+  }
 
-  if (loading) return <main className="shell loading-screen"><div className="loader-mark">l</div><p>Loading your calendar…</p></main>;
-  if (error || !data?.client) return <main className="shell empty-screen"><div className="brand-lockup"><span className="brand-mark">l</span><span>layaa</span></div><h1>Private calendar link</h1><p>{error || "This invite is not available."}</p><span className="help-note">Please ask the Layaa team for a fresh invite link.</span></main>;
+  async function login(event: FormEvent) {
+    event.preventDefault();
+    if (!invite.clientId || !invite.token || !email.trim() || !pin.trim()) return;
+    setLoggingIn(true); setError("");
+    try {
+      const response = await fetch(`${MAIN_CALENDAR_URL}/api/workspace`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ action: "clientPortalLogin", clientId: invite.clientId, inviteToken: invite.token, email: email.trim(), pin: pin.trim() }) });
+      const body = await response.json() as Payload;
+      if (!response.ok || !body.session) throw new Error(body.error || "Unable to sign in");
+      window.localStorage.setItem(`layaa-portal-session:${invite.clientId}`, body.session);
+      setData(body); setActiveClientId(body.clients?.find((client) => client.id === invite.clientId)?.id || body.clients?.[0]?.id || ""); setPin("");
+    } catch (reason) { setError(reason instanceof Error ? reason.message : "Unable to sign in"); }
+    finally { setLoggingIn(false); }
+  }
 
-  const client = data.client;
-  const target = Math.max(0, client.target || 0);
-  const progress = target ? Math.min(100, Math.round((delivered / target) * 100)) : 0;
+  function logout() { window.localStorage.removeItem(`layaa-portal-session:${invite.clientId}`); setData(null); setEmail(""); setPin(""); setError(""); }
+
+  async function record(event: string, extra: Record<string, unknown> = {}, clientId = activeClientId) {
+    if (!data?.session || !clientId) return;
+    try {
+      const response = await fetch(`${MAIN_CALENDAR_URL}/api/workspace`, { method: "POST", headers: { "Content-Type": "application/json", "X-Client-Portal-Session": data.session }, body: JSON.stringify({ action: "clientPortalActivity", session: data.session, clientId, event, ...extra }) });
+      const body = await response.json() as { log?: Activity };
+      if (body.log) setData((current) => current ? { ...current, activity: [body.log!, ...(current.activity || []).filter((row) => row.id !== body.log!.id)] } : current);
+    } catch {}
+  }
+
+  const clients = data?.clients || [];
+  const activeClient = clients.find((client) => client.id === activeClientId) || clients[0];
+  const month = months[monthIndex];
+  const allItems = (data?.items || []).filter((item) => item.clientId === activeClient?.id);
+  const filteredItems = filter === "All" ? allItems : allItems.filter((item) => item.status === filter);
+  const monthItems = filteredItems.filter((item) => item.dateKey?.startsWith(`${month.key} `));
+  const scheduledThisMonth = allItems.filter((item) => item.dateKey?.startsWith(`${month.key} `)).length;
+  const delivered = allItems.filter((item) => ["Delivered", "Posted"].includes(item.status)).length;
+  const progress = activeClient?.target ? Math.min(100, Math.round(delivered / activeClient.target * 100)) : 0;
+  const cells: Array<number | null> = [...Array.from({ length: month.starts }, () => null), ...Array.from({ length: month.days }, (_, index) => index + 1)];
+  while (cells.length % 7) cells.push(null);
+  const itemMap = useMemo(() => { const map = new Map<number, Item[]>(); monthItems.forEach((item) => { const day = Number(item.dateKey?.split(" ")[1]); if (day) map.set(day, [...(map.get(day) || []), item]); }); return map; }, [monthItems]);
+
+  if (loading) return <main className="shell loading-screen"><div className="loader-mark">ल</div><p>Opening your private calendar…</p></main>;
+  if (!invite.clientId || !invite.token) return <main className="shell empty-screen"><Brand/><h1>Private calendar link</h1><p>{error}</p></main>;
+  if (!data?.session) return <main className="shell auth-screen"><Brand/><section className="auth-card"><p className="eyebrow">PRIVATE CLIENT PORTAL</p><h1>Sign in to your calendar</h1><p>Enter the approved owner email and private PIN supplied by Layaa.</p><form onSubmit={login}><label>Email address<input type="email" value={email} onChange={(event) => setEmail(event.target.value)} placeholder="you@company.com" autoComplete="email" required/></label><label>Portal PIN<input type="password" value={pin} onChange={(event) => setPin(event.target.value)} placeholder="Enter your PIN" autoComplete="current-password" required/></label>{error && <p className="form-error">{error}</p>}<button className="primary-button" disabled={loggingIn}>{loggingIn ? "Signing in…" : "Open client portal"}</button></form><small>Every sign-in and portal action is recorded for your client workspace.</small></section></main>;
 
   return <main className="shell">
-    <header className="topbar"><div className="brand-lockup"><span className="brand-mark">l</span><span>layaa</span></div><span className="portal-label">CLIENT PORTAL</span><span className="secure-label"><span className="secure-dot" /> Private view</span></header>
-    <section className="hero" style={{ "--client-color": client.color || "#2f6a61" } as React.CSSProperties}><div><p className="eyebrow">CONTENT CALENDAR · {client.kind.toUpperCase()}</p><h1>{client.name}</h1><p className="hero-sub">Your content plan, progress, and delivery links in one place.</p></div><div className="hero-meta"><span>{client.split || "Monthly content plan"}</span>{client.finalContentLink ? <a href={client.finalContentLink} target="_blank" rel="noreferrer">Final Drive folder ↗</a> : null}</div></section>
-    <section className="stats-grid" aria-label="Calendar summary"><article><span className="stat-label">This month</span><strong>{items.length}</strong><span className="stat-note">planned items</span></article><article><span className="stat-label">Delivered</span><strong>{delivered}</strong><span className="stat-note">of {target || "—"} target</span></article><article><span className="stat-label">Progress</span><strong>{progress}%</strong><div className="progress"><span style={{ width: `${progress}%` }} /></div></article></section>
-    <section className="calendar-panel"><div className="section-head"><div><p className="eyebrow">WORK PLAN</p><h2>Content calendar</h2></div><span className="item-count">{visibleItems.length} {visibleItems.length === 1 ? "item" : "items"}</span></div><div className="filter-row" role="tablist" aria-label="Filter content status">{statuses.map((status) => <button key={status} className={filter === status ? "filter active" : "filter"} onClick={() => setFilter(status)}>{status}</button>)}</div>{grouped.length ? <div className="timeline">{grouped.map(([date, dateItems]) => <div className="day-group" key={date}><div className="day-label"><span className="day-dot" />{date}</div><div className="day-items">{dateItems.map((item) => <article className="content-card" key={item.id}><div className="card-main"><div className="type-chip">{item.type}</div><h3>{item.title}</h3>{item.owner ? <p className="owner">Assigned to {item.owner}</p> : null}{item.notes ? <p className="notes">{item.notes}</p> : null}</div><div className="card-actions"><span className={`status ${statusClass(item.status)}`}>{item.status}</span>{item.rawLink ? <a href={item.rawLink} target="_blank" rel="noreferrer">Raw Drive ↗</a> : null}{item.finalLink ? <a href={item.finalLink} target="_blank" rel="noreferrer">Final Drive ↗</a> : null}</div></article>)}</div></div>)}</div> : <div className="empty-calendar"><span>✓</span><h3>No items in this view</h3><p>Try another status filter or check back after the next update.</p></div>}</section>
+    <header className="topbar"><Brand/><span className="portal-label">CLIENT PORTAL</span><span className="secure-label"><span className="secure-dot"/> Signed in as {data.viewerEmail || email}</span><button className="text-button" onClick={logout}>Sign out</button></header>
+    {clients.length > 1 && <nav className="client-tabs" aria-label="Client workspaces">{clients.map((client) => <button key={client.id} data-active={client.id === activeClient?.id} onClick={() => { setActiveClientId(client.id); setMonthIndex(0); setFilter("All"); void record("tab_changed", { tab: client.clientDisplayName || client.name }, client.id); }}>{client.clientDisplayName || client.name}</button>)}</nav>}
+    {activeClient && <>
+      <section className="hero" style={{ "--client-color": activeClient.color || "#17594f" } as React.CSSProperties}><div><p className="eyebrow">CONTENT CALENDAR · {activeClient.kind.toUpperCase()}</p><h1>{activeClient.clientDisplayName || activeClient.name}</h1><p className="hero-sub">Your content plan, progress, approvals, and final delivery links in one place.</p></div><div className="hero-meta"><span>{activeClient.split || "Monthly content plan"}</span>{activeClient.finalContentLink && <a href={activeClient.finalContentLink} target="_blank" rel="noreferrer" onClick={() => void record("drive_opened", { title: "Final content folder" })}>Final Drive folder ↗</a>}</div></section>
+      <section className="stats-grid"><article><span className="stat-label">This month</span><strong>{scheduledThisMonth}</strong><span className="stat-note">scheduled items</span></article><article><span className="stat-label">Delivered</span><strong>{delivered}</strong><span className="stat-note">of {activeClient.target || "—"} target</span></article><article><span className="stat-label">Progress</span><strong>{progress}%</strong><div className="progress"><span style={{ width: `${progress}%` }}/></div></article></section>
+      <section className="calendar-panel"><div className="section-head"><div><p className="eyebrow">WORK PLAN · {month.gregorian}</p><h2>Content calendar</h2></div><div className="calendar-tools"><button onClick={() => { const next = Math.max(0, monthIndex - 1); setMonthIndex(next); void record("month_changed", { month: months[next].label }); }} disabled={monthIndex === 0}>‹</button><strong>{month.label}</strong><button onClick={() => { const next = Math.min(months.length - 1, monthIndex + 1); setMonthIndex(next); void record("month_changed", { month: months[next].label }); }} disabled={monthIndex === months.length - 1}>›</button><div className="view-switch"><button data-active={view === "calendar"} onClick={() => setView("calendar")}>Calendar</button><button data-active={view === "list"} onClick={() => setView("list")}>List</button></div></div></div>
+        <div className="filter-row">{statuses.map((status) => <button key={status} className={filter === status ? "filter active" : "filter"} onClick={() => setFilter(status)}>{status}</button>)}</div>
+        {view === "calendar" ? <div className="calendar-grid"><div className="weekdays">{["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"].map((day) => <span key={day}>{day}</span>)}</div><div className="calendar-cells">{cells.map((day, index) => <div className={`calendar-cell ${day ? "" : "muted"}`} key={`${month.key}-${index}`}><div className="date-line"><strong>{day || ""}</strong>{day && <small>{englishDate(month, day)}</small>}</div>{day && (itemMap.get(day) || []).map((item) => <article className="calendar-item" key={item.id} onClick={() => void record("viewed", { itemId: item.id, title: item.title })}><span className="type-chip">{item.type}</span><h3>{item.title}</h3><span className={`status ${statusClass(item.status)}`}>{item.status}</span>{item.finalLink && <a href={item.finalLink} target="_blank" rel="noreferrer" onClick={(event) => { event.stopPropagation(); void record("drive_opened", { itemId: item.id, title: item.title }); }}>Final Drive ↗</a>}</article>)}</div>)}</div></div> : <div className="list-view">{monthItems.length ? monthItems.map((item) => <article className="list-item" key={item.id} onClick={() => void record("viewed", { itemId: item.id, title: item.title })}><div><span className="eyebrow">{item.dateKey}</span><h3>{item.title}</h3><span className="type-chip">{item.type}</span></div><div><span className={`status ${statusClass(item.status)}`}>{item.status}</span>{item.finalLink && <a href={item.finalLink} target="_blank" rel="noreferrer" onClick={(event) => { event.stopPropagation(); void record("drive_opened", { itemId: item.id, title: item.title }); }}>Final Drive ↗</a>}</div></article>) : <div className="empty-calendar"><h3>No items in this view</h3><p>Try another month or status filter.</p></div>}</div>}
+      </section>
+      <section className="activity-panel"><div className="section-head"><div><p className="eyebrow">ACCOUNT HISTORY</p><h2>Activity log</h2><p>Client-safe calendar changes and portal activity for this account.</p></div><span className="item-count">{data.activity?.length || 0} events</span></div><div className="activity-list">{data.activity?.length ? data.activity.map((row) => <article key={row.id}><div><strong>{row.summary}</strong><small>{row.actorName || row.actorEmail} · {row.actorEmail}</small></div><time>{formatLogTime(row.createdAt)}</time></article>) : <div className="empty-calendar"><p>No activity recorded yet.</p></div>}</div></section>
+    </>}
     <footer><span>Prepared by Layaa</span><span>Questions or changes? Contact your Layaa team.</span></footer>
   </main>;
 }
+
+function Brand() { return <div className="brand-lockup"><span className="brand-mark">ल</span><span>layaa</span></div>; }
