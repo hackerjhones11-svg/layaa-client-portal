@@ -20,7 +20,8 @@ const months: Month[] = [
   { key: "Chaitra", label: "Chaitra 2083", gregorian: "Mar / Apr 2027", days: 30, starts: 1, englishStart: "2027-03-16" },
   { key: "Baisakh", label: "Baisakh 2084", gregorian: "Apr / May 2027", days: 31, starts: 3, englishStart: "2027-04-15" },
 ];
-const clientFilters = ["All", "Work in progress", "Waiting Client Approval", "Delivered"];
+const clientFilters = ["All", "Work in progress", "Waiting Client Approval", "Ready to Post", "Delivered", "Posted"];
+const calendarEvents: Record<string, string> = { "Bhadra 26": "Father's Day" };
 
 function englishDateParts(month: Month, day: number) {
   const date = new Date(`${month.englishStart}T00:00:00Z`);
@@ -44,6 +45,8 @@ function todayNepaliKey() {
 function displayStatus(status: string) {
   if (status === "Delivered") return "Delivered";
   if (status === "Waiting Client Approval") return "Waiting Client Approval";
+  if (status === "Ready to Post") return "Ready to Post";
+  if (status === "Posted") return "Posted";
   return "Work in progress";
 }
 function statusClass(status: string) { return displayStatus(status).toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, ""); }
@@ -79,7 +82,6 @@ export default function Home() {
   const [notice, setNotice] = useState("");
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
-  const [sessionNumber, setSessionNumber] = useState(0);
   const sessionNumberRef = useRef(0);
   const tabSessionIdRef = useRef("");
   const tabSessionStartedRef = useRef(false);
@@ -183,7 +185,7 @@ export default function Home() {
       try {
         const response = await fetch(`${MAIN_CALENDAR_URL}/api/workspace`, { method: "POST", headers: { "Content-Type": "application/json", "X-Client-Portal-Session": authSession }, body: JSON.stringify({ action: "clientPortalSessionStart", clientId: invite.clientId, session: authSession, sessionId: tabSessionIdRef.current }) });
         const body = await response.json();
-        if (response.ok && body.usageSession?.sessionNumber) { sessionNumberRef.current = Number(body.usageSession.sessionNumber); setSessionNumber(sessionNumberRef.current); }
+        if (response.ok && body.usageSession?.sessionNumber) { sessionNumberRef.current = Number(body.usageSession.sessionNumber); }
       } catch {}
     };
     void start();
@@ -245,7 +247,7 @@ export default function Home() {
     window.sessionStorage.removeItem(`layaa-portal-cache:${invite.clientId}`);
     tabSessionStartedRef.current = false; sessionEndedRef.current = false; tabSessionIdRef.current = ""; activeMsRef.current = 0; activeStartedAtRef.current = 0;
     sessionNumberRef.current = 0;
-    setData(null); setPin(""); setError(""); setSessionNumber(0); setBusy(false);
+    setData(null); setPin(""); setError(""); setBusy(false);
   }
 
   async function submitDecision(event: FormEvent) {
@@ -283,13 +285,13 @@ export default function Home() {
 
   if (loading) return <main className="portal-shell loading-screen"><Brand/><div className="loading-pulse"/><p>Opening your private calendar…</p></main>;
   if (!invite.clientId || !invite.token) return <main className="portal-shell empty-screen"><Brand/><p className="eyebrow">Private client portal</p><h1>Calendar link unavailable</h1><p>{error}</p></main>;
-  if (!data?.session) return <main className="portal-shell auth-screen"><Brand/><section className="auth-card"><p className="eyebrow">Private client portal</p><h1>Sign in to your calendar</h1><p>Use your own email address and the private PIN shared by the Layaa team.</p><form onSubmit={login}><label>Email address<input type="email" value={email} onChange={(event) => setEmail(event.target.value)} placeholder="you@company.com" autoComplete="email" required/></label><label>Portal PIN<input type="password" inputMode="numeric" value={pin} onChange={(event) => setPin(event.target.value)} placeholder="Enter your PIN" autoComplete="current-password" required/></label>{error && <p className="form-error">{error}</p>}<button className="primary-button" disabled={busy}>{busy ? "Signing in…" : "Open client portal"}</button></form><small>Any valid email works. It is used to record who logged in and what happened during each session.</small></section></main>;
+  if (!data?.session) return <main className="portal-shell auth-screen"><Brand/><section className="auth-card"><p className="eyebrow">Private client portal</p><h1>Sign in to your calendar</h1><p>Use your own email address and the private PIN shared by the Layaa team.</p><form onSubmit={login}><label>Email address<input type="email" value={email} onChange={(event) => setEmail(event.target.value)} placeholder="you@company.com" autoComplete="email" required/></label><label>Portal PIN<input type="password" inputMode="numeric" value={pin} onChange={(event) => setPin(event.target.value)} placeholder="Enter your PIN" autoComplete="current-password" required/></label>{error && <p className="form-error">{error}</p>}<button className="primary-button" disabled={busy}>{busy ? "Signing in…" : "Open client portal"}</button></form></section></main>;
 
   return <main className="portal-shell">
-    <header className="portal-topbar"><Brand/><span className="portal-label">CLIENT PORTAL</span><span className="secure-label"><span className="secure-dot"/> {data.viewerEmail || email}{sessionNumber ? ` · Session ${sessionNumber}` : ""}</span><button className="text-button" onClick={logout} disabled={busy}>Sign out</button></header>
+    <header className="portal-topbar"><Brand/><span className="portal-label">CLIENT PORTAL</span><span className="secure-label"><span className="secure-dot"/> {data.viewerEmail || email}</span><button className="text-button" onClick={logout} disabled={busy}>Sign out</button></header>
     {clients.length > 1 && <nav className="client-tabs" aria-label="Client workspaces">{clients.map((client) => <button key={client.id} data-active={client.id === activeClient?.id} onClick={() => { setActiveClientId(client.id); setMonthIndex(0); setFilter("All"); void record("tab_changed", { tab: client.clientDisplayName || client.name }, client.id); }}>{client.clientDisplayName || client.name}</button>)}</nav>}
     {activeClient && <>
-      <section className="portal-hero" style={{ "--client-color": activeClient.color || "#17594f" } as React.CSSProperties}><div><p className="eyebrow">Content calendar · {activeClient.kind}</p><h1>{activeClient.clientDisplayName || activeClient.name}</h1><p>Your plan, progress, approvals, and final delivery links in one place.</p></div><div className="hero-meta"><span>{activeClient.split || "Monthly content plan"}</span>{activeClient.finalContentLink && <a href={activeClient.finalContentLink} target="_blank" rel="noreferrer" onClick={() => void record("drive_opened", { title: "Final content folder" })}><Icon name="link" size={15}/> Final Drive folder</a>}</div></section>
+      <section className="portal-hero" style={{ "--client-color": activeClient.color || "#17594f" } as React.CSSProperties}><div><p className="eyebrow">Content calendar · {activeClient.kind}</p><h1>{activeClient.clientDisplayName || activeClient.name}</h1><p>Your plan, progress, approvals, and final delivery links in one place.</p>{activeClient.id === "beyond-trend" && <small className="portal-activity-note">Recorded active time counts only while this portal is visible and focused.</small>}</div><div className="hero-meta"><span>{activeClient.split || "Monthly content plan"}</span>{activeClient.finalContentLink && <a href={activeClient.finalContentLink} target="_blank" rel="noreferrer" onClick={() => void record("drive_opened", { title: "Final content folder" })}><Icon name="link" size={15}/> Final Drive folder</a>}</div></section>
       <section className="stats-grid"><article><span>This month</span><strong>{monthAllItems.length}</strong><small>scheduled items</small></article><article><span>Completed</span><strong>{completed}</strong><small>out of {activeClient.target || "—"}</small></article><article><span>Progress</span><strong>{progress}%</strong><div className="progress"><span style={{ width: `${progress}%` }}/></div></article><button className="approval-stat" onClick={() => document.getElementById("client-approvals")?.scrollIntoView({ behavior: "smooth", block: "start" })}><span>Waiting for approval</span><strong>{approvals.length}</strong><small>Open review queue</small></button></section>
       <section className="approval-panel" id="client-approvals"><div className="section-title"><div><p className="eyebrow">Your review queue</p><h2>Waiting for your approval</h2><p>Open the final video, then approve it or send a clear change request.</p></div><span>{approvals.length} {approvals.length === 1 ? "video" : "videos"}</span></div>{approvals.length ? <div className="approval-list">{approvals.map((item) => <article key={item.id}><div><strong>{item.title}</strong><small>{item.dateKey || "Unscheduled"} · {item.type}</small></div>{item.finalLink ? <a href={item.finalLink} target="_blank" rel="noreferrer" onClick={() => void record("approval_opened", { itemId: item.id, title: item.title })}><Icon name="link" size={15}/> Open final video</a> : <span className="missing-link">Final video link pending</span>}<div><button className="approve-button" onClick={() => { setApproval({ item, mode: "approve" }); setRevisionNote(""); void record("approval_opened", { itemId: item.id, title: item.title }); }}><Icon name="check" size={15}/> Approve</button><button className="changes-button" onClick={() => { setApproval({ item, mode: "decline" }); setRevisionNote(""); void record("approval_opened", { itemId: item.id, title: item.title }); }}><Icon name="message" size={15}/> Request changes</button></div></article>)}</div> : <div className="approval-empty"><Icon name="check" size={21}/><span><strong>You&apos;re all caught up</strong><small>No videos are waiting for approval right now.</small></span></div>}</section>
       <section className="calendar-panel"><div className="calendar-head"><div><p className="eyebrow">Work plan · {month.gregorian}</p><h2>Content calendar</h2></div><div className="calendar-tools"><button disabled={monthIndex === 0} onClick={() => { const next = Math.max(0, monthIndex - 1); setMonthIndex(next); void record("month_changed", { month: months[next].label }); }} aria-label="Previous month">‹</button><strong>{month.label}</strong><button disabled={monthIndex === months.length - 1} onClick={() => { const next = Math.min(months.length - 1, monthIndex + 1); setMonthIndex(next); void record("month_changed", { month: months[next].label }); }} aria-label="Next month">›</button><div className="view-switch"><button data-active={view === "calendar"} onClick={() => setView("calendar")}><Icon name="calendar" size={15}/> Calendar</button><button data-active={view === "list"} onClick={() => setView("list")}><Icon name="list" size={15}/> List</button></div></div></div><div className="filter-row">{availableFilters.map((status) => <button key={status} data-active={filter === status} onClick={() => setFilter(status)}>{status}</button>)}</div>
@@ -298,7 +300,8 @@ export default function Home() {
           const key = `${month.key} ${day}`;
           const preContract = activeClient.contractStartDate && dateOrder(key) < dateOrder(activeClient.contractStartDate);
           const isToday = key === todayKey;
-          return <div className={`calendar-cell ${preContract ? "pre-contract" : ""} ${isToday ? "today" : ""}`} key={key}><div className="date-line"><strong>{day}</strong>{isToday && <b>Today</b>}</div><div className="cell-items">{(itemMap.get(day) || []).map((item) => <article className={`calendar-item ${typeClass(item.type)}`} key={item.id} onClick={() => void record("viewed", { itemId: item.id, title: item.title })}><h3>{item.title}</h3><span className={`status ${statusClass(item.status)}`}>{displayStatus(item.status)}</span>{item.finalLink && <a href={item.finalLink} target="_blank" rel="noreferrer" aria-label={`Open final video for ${item.title}`} onClick={(event) => { event.stopPropagation(); void record("drive_opened", { itemId: item.id, title: item.title }); }}><Icon name="link" size={12}/></a>}</article>)}</div><small className="english-date">{englishDateCompact(month, day)}</small></div>;
+          const eventLabel = calendarEvents[key];
+          return <div className={`calendar-cell ${preContract ? "pre-contract" : ""} ${isToday ? "today" : ""} ${eventLabel ? "has-event" : ""}`} key={key}><div className="date-line"><strong>{day}</strong>{isToday && <b>Today</b>}</div>{eventLabel && <div className="calendar-event"><Icon name="calendar" size={11}/><span>{eventLabel}</span></div>}<div className="cell-items">{(itemMap.get(day) || []).map((item) => <article className={`calendar-item ${typeClass(item.type)}`} key={item.id} onClick={() => void record("viewed", { itemId: item.id, title: item.title })}><h3>{item.title}</h3><span className={`status ${statusClass(item.status)}`}>{displayStatus(item.status)}</span>{item.finalLink && <a href={item.finalLink} target="_blank" rel="noreferrer" aria-label={`Open final video for ${item.title}`} onClick={(event) => { event.stopPropagation(); void record("drive_opened", { itemId: item.id, title: item.title }); }}><Icon name="link" size={12}/></a>}</article>)}</div><small className="english-date">{englishDateCompact(month, day)}</small></div>;
         })}</div></div></div> : <div className="list-view">{monthVisibleItems.length ? [...monthVisibleItems].sort((a, b) => dateOrder(a.dateKey) - dateOrder(b.dateKey)).map((item) => <article className="list-item" key={item.id} onClick={() => void record("viewed", { itemId: item.id, title: item.title })}><div><span>{item.dateKey} · {item.dateKey ? englishDate(month, Number(item.dateKey.split(" ")[1])) : ""}</span><h3>{item.title}</h3><small>{item.type}</small></div><div><i className={`status ${statusClass(item.status)}`}>{displayStatus(item.status)}</i>{item.finalLink && <a href={item.finalLink} target="_blank" rel="noreferrer" onClick={(event) => { event.stopPropagation(); void record("drive_opened", { itemId: item.id, title: item.title }); }}><Icon name="link" size={13}/> Final video</a>}</div></article>) : <div className="empty-calendar"><h3>No items in this view</h3><p>Try another month or status.</p></div>}</div>}
       </section>
     </>}
