@@ -20,7 +20,7 @@ const months: Month[] = [
   { key: "Chaitra", label: "Chaitra 2083", gregorian: "Mar / Apr 2027", days: 30, starts: 1, englishStart: "2027-03-16" },
   { key: "Baisakh", label: "Baisakh 2084", gregorian: "Apr / May 2027", days: 31, starts: 3, englishStart: "2027-04-15" },
 ];
-const clientFilters = ["All", "Planned", "Shot", "Editing", "Waiting Client Approval", "Declined by Client (Need Revision)", "Ready to Post", "Delivered", "Posted"];
+const clientFilters = ["All", "Work in progress", "Waiting Client Approval", "Delivered"];
 
 function englishDateParts(month: Month, day: number) {
   const date = new Date(`${month.englishStart}T00:00:00Z`);
@@ -42,10 +42,9 @@ function todayNepaliKey() {
   return "";
 }
 function displayStatus(status: string) {
-  if (status === "Script Ready") return "Planned";
-  if (status === "Waiting CD Approval") return "In review";
-  if (status === "Declined by CD") return "In revision";
-  return status === "Approved" ? "Delivered" : status;
+  if (status === "Delivered") return "Delivered";
+  if (status === "Waiting Client Approval") return "Waiting Client Approval";
+  return "Work in progress";
 }
 function statusClass(status: string) { return displayStatus(status).toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, ""); }
 function matchesFilter(item: Item, filter: string) { return filter === "All" || displayStatus(item.status) === filter; }
@@ -269,7 +268,7 @@ export default function Home() {
   const activeClient = clients.find((client) => client.id === activeClientId) || clients[0];
   const month = months[monthIndex];
   const allItems = (data?.items || []).filter((item) => item.clientId === activeClient?.id);
-  const availableFilters = clientFilters.filter((status) => status !== "Posted" && status !== "Ready to Post" ? true : Boolean(activeClient?.handlesPosting)).filter((status) => status === "All" || allItems.some((item) => displayStatus(item.status) === status) || ["Planned", "Shot", "Editing", "Waiting Client Approval", "Delivered"].includes(status));
+  const availableFilters = clientFilters.filter((status) => status === "All" || allItems.some((item) => displayStatus(item.status) === status));
   const filteredItems = allItems.filter((item) => matchesFilter(item, filter));
   const monthVisibleItems = filteredItems.filter((item) => item.dateKey?.startsWith(`${month.key} `));
   const monthAllItems = allItems.filter((item) => item.dateKey?.startsWith(`${month.key} `));
