@@ -23,6 +23,38 @@ const months: Month[] = [
 const clientFilters = ["All", "Work in progress", "Waiting Client Approval", "Ready to Post", "Delivered", "Posted"];
 const calendarEvents: Record<string, string> = { "Bhadra 26": "Father's Day" };
 
+const kmClientIds = ['karya-nirman','picklepoint','cage-total-fitness','fit-industries'];
+const nepaliMonths = ['Bhadra','Ashoj','Kartik','Mangsir','Poush','Magh','Falgun','Chaitra','Baisakh'];
+const nepaliStarts = ['2026-08-17','2026-09-17','2026-10-18','2026-11-17','2026-12-17','2027-01-16','2027-02-14','2027-03-16','2027-04-15'];
+function isKmClient(client: {id?: string}) { return kmClientIds.includes(client.id || ''); }
+function isIsoDate(key: string | null | undefined): key is `${number}-${number}-${number}` { return !!key && /^\d{4}-\d{2}-\d{2}$/.test(key) && !Number.isNaN(Date.parse(key)) && new Date(key+'T00:00:00Z').toISOString().slice(0,10) === key; }
+function isoFromDateKey(key: string | null | undefined) {
+  if (isIsoDate(key)) return key;
+  const [name, value] = (key || '').split(' '); const index = nepaliMonths.indexOf(name); const day = Number(value);
+  if(index < 0 || !day) return '';
+  const date = new Date(nepaliStarts[index]+'T00:00:00Z'); date.setUTCDate(date.getUTCDate()+day-1); return date.toISOString().slice(0,10);
+}
+function nepaliFromIso(iso: string) {
+  if(!isIsoDate(iso)) return '';
+  const index = nepaliStarts.findLastIndex(start => start <= iso);
+  if(index < 0) return '';
+  const day = Math.round((Date.parse(iso)-Date.parse(nepaliStarts[index]))/86400000)+1;
+  return `${nepaliMonths[index]} ${day}`;
+}
+const kmMonths = nepaliMonths.map((_,index) => {
+  const date = new Date(Date.UTC(2026,8+index,1)); const key = date.toISOString().slice(0,7);
+  return {key,label:date.toLocaleDateString('en-US',{month:'long',year:'numeric',timeZone:'UTC'}),gregorian:'',days:new Date(Date.UTC(date.getUTCFullYear(),date.getUTCMonth()+1,0)).getUTCDate(),starts:date.getUTCDay(),englishStart:key+'-01'};
+});
+function calendarKey(month: {key:string},day: number) { return /^\d{4}-\d{2}$/.test(month.key) ? `${month.key}-${String(day).padStart(2,'0')}` : `${month.key} ${day}`; }
+
+function nepaliCalendarLabel(month: {key:string;days:number},day:number) {
+  const current = nepaliFromIso(calendarKey(month,day));
+  const [name,number] = current.split(' ');
+  const previous = day > 1 ? nepaliFromIso(calendarKey(month,day-1)).split(' ')[0] : '';
+  const next = day < month.days ? nepaliFromIso(calendarKey(month,day+1)).split(' ')[0] : '';
+  return day === 1 || day === month.days || previous !== name || next !== name ? current : number;
+}
+
 function englishDateParts(month: Month, day: number) {
   const date = new Date(`${month.englishStart}T00:00:00Z`);
   date.setUTCDate(date.getUTCDate() + day - 1);
@@ -35,7 +67,7 @@ function englishDateCompact(month: Month, day: number) {
   const next = day < month.days ? englishDateParts(month, day + 1) : null;
   return day === 1 || day === month.days || previous?.month !== current.month || next?.month !== current.month ? `${current.month} ${current.day}` : String(current.day);
 }
-function dateOrder(dateKey: string | null | undefined) { if (!dateKey) return -1; const [name, day] = dateKey.split(" "); return months.findIndex((month) => month.key === name) * 40 + Number(day || 0); }
+function dateOrder(dateKey: string | null | undefined) { const iso=isoFromDateKey(dateKey); return iso ? Date.parse(iso)/86400000 : -1; }
 function todayKathmanduIso() { return new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Kathmandu", year: "numeric", month: "2-digit", day: "2-digit" }).format(new Date()); }
 function todayNepaliKey() {
   const today = todayKathmanduIso();
@@ -268,20 +300,22 @@ export default function Home() {
 
   const clients = data?.clients || [];
   const activeClient = clients.find((client) => client.id === activeClientId) || clients[0];
-  const month = months[monthIndex];
-  const allItems = (data?.items || []).filter((item) => item.clientId === activeClient?.id);
+  const englishMonth = !!activeClient && isKmClient(activeClient);
+  const clientMonths = englishMonth ? kmMonths : months;
+  const month = clientMonths[monthIndex];
+  const allItems = (data?.items || []).filter((item) => item.clientId === activeClient?.id).map(item => englishMonth ? {...item,dateKey:isoFromDateKey(item.dateKey) || null} : item);
   const availableFilters = clientFilters.filter((status) => status === "All" || allItems.some((item) => displayStatus(item.status) === status));
   const filteredItems = allItems.filter((item) => matchesFilter(item, filter));
-  const monthVisibleItems = filteredItems.filter((item) => item.dateKey?.startsWith(`${month.key} `));
-  const monthAllItems = allItems.filter((item) => item.dateKey?.startsWith(`${month.key} `));
+  const monthVisibleItems = filteredItems.filter((item) => item.dateKey?.startsWith(`${month.key}${englishMonth ? "-" : " "}`));
+  const monthAllItems = allItems.filter((item) => item.dateKey?.startsWith(`${month.key}${englishMonth ? "-" : " "}`));
   const completed = allItems.filter((item) => isComplete(item, activeClient)).length;
   const progress = activeClient?.target ? Math.min(100, Math.round(completed / activeClient.target * 100)) : 0;
   const approvals = allItems.filter((item) => item.status === "Waiting Client Approval");
   const cells: Array<number | null> = [...Array.from({ length: month.starts }, () => null), ...Array.from({ length: month.days }, (_, index) => index + 1)];
   while (cells.length % 7) cells.push(null);
   const itemMap = new Map<number, Item[]>();
-  monthVisibleItems.forEach((item) => { const day = Number(item.dateKey?.split(" ")[1]); if (day) itemMap.set(day, [...(itemMap.get(day) || []), item]); });
-  const todayKey = todayNepaliKey();
+  monthVisibleItems.forEach((item) => { const day = Number(englishMonth ? item.dateKey?.slice(-2) : item.dateKey?.split(" ")[1]); if (day) itemMap.set(day, [...(itemMap.get(day) || []), item]); });
+  const todayKey = englishMonth ? todayKathmanduIso() : todayNepaliKey();
 
   if (loading) return <main className="portal-shell loading-screen"><Brand/><div className="loading-pulse"/><p>Opening your private calendar…</p></main>;
   if (!invite.clientId || !invite.token) return <main className="portal-shell empty-screen"><Brand/><p className="eyebrow">Private client portal</p><h1>Calendar link unavailable</h1><p>{error}</p></main>;
@@ -294,15 +328,15 @@ export default function Home() {
       <section className="portal-hero" style={{ "--client-color": activeClient.color || "#17594f" } as React.CSSProperties}><div><p className="eyebrow">Content calendar · {activeClient.kind}</p><h1>{activeClient.clientDisplayName || activeClient.name}</h1><p>Your plan, progress, approvals, and final delivery links in one place.</p>{activeClient.id === "beyond-trend" && <small className="portal-activity-note">Recorded active time counts only while this portal is visible and focused.</small>}</div><div className="hero-meta"><span>{activeClient.split || "Monthly content plan"}</span>{activeClient.finalContentLink && <a href={activeClient.finalContentLink} target="_blank" rel="noreferrer" onClick={() => void record("drive_opened", { title: "Final content folder" })}><Icon name="link" size={15}/> Final Drive folder</a>}</div></section>
       <section className="stats-grid"><article><span>This month</span><strong>{monthAllItems.length}</strong><small>scheduled items</small></article><article><span>Completed</span><strong>{completed}</strong><small>out of {activeClient.target || "—"}</small></article><article><span>Progress</span><strong>{progress}%</strong><div className="progress"><span style={{ width: `${progress}%` }}/></div></article><button className="approval-stat" onClick={() => document.getElementById("client-approvals")?.scrollIntoView({ behavior: "smooth", block: "start" })}><span>Waiting for approval</span><strong>{approvals.length}</strong><small>Open review queue</small></button></section>
       <section className="approval-panel" id="client-approvals"><div className="section-title"><div><p className="eyebrow">Your review queue</p><h2>Waiting for your approval</h2><p>Open the final video, then approve it or send a clear change request.</p></div><span>{approvals.length} {approvals.length === 1 ? "video" : "videos"}</span></div>{approvals.length ? <div className="approval-list">{approvals.map((item) => <article key={item.id}><div><strong>{item.title}</strong><small>{item.dateKey || "Unscheduled"} · {item.type}</small></div>{item.finalLink ? <a href={item.finalLink} target="_blank" rel="noreferrer" onClick={() => void record("approval_opened", { itemId: item.id, title: item.title })}><Icon name="link" size={15}/> Open final video</a> : <span className="missing-link">Final video link pending</span>}<div><button className="approve-button" onClick={() => { setApproval({ item, mode: "approve" }); setRevisionNote(""); void record("approval_opened", { itemId: item.id, title: item.title }); }}><Icon name="check" size={15}/> Approve</button><button className="changes-button" onClick={() => { setApproval({ item, mode: "decline" }); setRevisionNote(""); void record("approval_opened", { itemId: item.id, title: item.title }); }}><Icon name="message" size={15}/> Request changes</button></div></article>)}</div> : <div className="approval-empty"><Icon name="check" size={21}/><span><strong>You&apos;re all caught up</strong><small>No videos are waiting for approval right now.</small></span></div>}</section>
-      <section className="calendar-panel"><div className="calendar-head"><div><p className="eyebrow">Work plan · {month.gregorian}</p><h2>Content calendar</h2></div><div className="calendar-tools"><button disabled={monthIndex === 0} onClick={() => { const next = Math.max(0, monthIndex - 1); setMonthIndex(next); void record("month_changed", { month: months[next].label }); }} aria-label="Previous month">‹</button><strong>{month.label}</strong><button disabled={monthIndex === months.length - 1} onClick={() => { const next = Math.min(months.length - 1, monthIndex + 1); setMonthIndex(next); void record("month_changed", { month: months[next].label }); }} aria-label="Next month">›</button><div className="view-switch"><button data-active={view === "calendar"} onClick={() => setView("calendar")}><Icon name="calendar" size={15}/> Calendar</button><button data-active={view === "list"} onClick={() => setView("list")}><Icon name="list" size={15}/> List</button></div></div></div><div className="filter-row">{availableFilters.map((status) => <button key={status} data-active={filter === status} onClick={() => setFilter(status)}>{status}</button>)}</div>
+      <section className="calendar-panel"><div className="calendar-head"><div><p className="eyebrow">Work plan{month.gregorian && ` · ${month.gregorian}`}</p><h2>Content calendar</h2></div><div className="calendar-tools"><button disabled={monthIndex === 0} onClick={() => { const next = Math.max(0, monthIndex - 1); setMonthIndex(next); void record("month_changed", { month: clientMonths[next].label }); }} aria-label="Previous month">‹</button><strong>{month.label}</strong><button disabled={monthIndex === clientMonths.length - 1} onClick={() => { const next = Math.min(clientMonths.length - 1, monthIndex + 1); setMonthIndex(next); void record("month_changed", { month: clientMonths[next].label }); }} aria-label="Next month">›</button><div className="view-switch"><button data-active={view === "calendar"} onClick={() => setView("calendar")}><Icon name="calendar" size={15}/> Calendar</button><button data-active={view === "list"} onClick={() => setView("list")}><Icon name="list" size={15}/> List</button></div></div></div><div className="filter-row">{availableFilters.map((status) => <button key={status} data-active={filter === status} onClick={() => setFilter(status)}>{status}</button>)}</div>
         {view === "calendar" ? <div className="calendar-scroll"><div className="calendar-grid"><div className="weekdays">{["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"].map((day) => <span key={day}>{day}</span>)}</div><div className="calendar-cells">{cells.map((day, index) => {
           if (!day) return <div className="calendar-cell unavailable" key={`${month.key}-empty-${index}`}/>;
-          const key = `${month.key} ${day}`;
-          const preContract = activeClient.contractStartDate && dateOrder(key) < dateOrder(activeClient.contractStartDate);
+          const key = calendarKey(month,day);
+          const preContract = !englishMonth && activeClient.contractStartDate && dateOrder(key) < dateOrder(activeClient.contractStartDate);
           const isToday = key === todayKey;
-          const eventLabel = calendarEvents[key];
-          return <div className={`calendar-cell ${preContract ? "pre-contract" : ""} ${isToday ? "today" : ""} ${eventLabel ? "has-event" : ""}`} key={key}><div className="date-line"><strong>{day}</strong>{isToday && <b>Today</b>}</div>{eventLabel && <div className="calendar-event"><Icon name="calendar" size={11}/><span>{eventLabel}</span></div>}<div className="cell-items">{(itemMap.get(day) || []).map((item) => <article className={`calendar-item ${typeClass(item.type)}`} key={item.id} onClick={() => void record("viewed", { itemId: item.id, title: item.title })}><h3>{item.title}</h3><span className={`status ${statusClass(item.status)}`}>{displayStatus(item.status)}</span>{item.finalLink && <a href={item.finalLink} target="_blank" rel="noreferrer" aria-label={`Open final video for ${item.title}`} onClick={(event) => { event.stopPropagation(); void record("drive_opened", { itemId: item.id, title: item.title }); }}><Icon name="link" size={12}/></a>}</article>)}</div><small className="english-date">{englishDateCompact(month, day)}</small></div>;
-        })}</div></div></div> : <div className="list-view">{monthVisibleItems.length ? [...monthVisibleItems].sort((a, b) => dateOrder(a.dateKey) - dateOrder(b.dateKey)).map((item) => <article className="list-item" key={item.id} onClick={() => void record("viewed", { itemId: item.id, title: item.title })}><div><span>{item.dateKey} · {item.dateKey ? englishDate(month, Number(item.dateKey.split(" ")[1])) : ""}</span><h3>{item.title}</h3><small>{item.type}</small></div><div><i className={`status ${statusClass(item.status)}`}>{displayStatus(item.status)}</i>{item.finalLink && <a href={item.finalLink} target="_blank" rel="noreferrer" onClick={(event) => { event.stopPropagation(); void record("drive_opened", { itemId: item.id, title: item.title }); }}><Icon name="link" size={13}/> Final video</a>}</div></article>) : <div className="empty-calendar"><h3>No items in this view</h3><p>Try another month or status.</p></div>}</div>}
+          const eventLabel = calendarEvents[englishMonth ? nepaliFromIso(key) : key];
+          return <div className={`calendar-cell ${preContract ? "pre-contract" : ""} ${isToday ? "today" : ""} ${eventLabel ? "has-event" : ""}`} key={key}><div className="date-line"><strong>{day}</strong>{isToday && <b>Today</b>}</div>{eventLabel && <div className="calendar-event"><Icon name="calendar" size={11}/><span>{eventLabel}</span></div>}<div className="cell-items">{(itemMap.get(day) || []).map((item) => <article className={`calendar-item ${typeClass(item.type)}`} key={item.id} onClick={() => void record("viewed", { itemId: item.id, title: item.title })}><h3>{item.title}</h3><span className={`status ${statusClass(item.status)}`}>{displayStatus(item.status)}</span>{item.finalLink && <a href={item.finalLink} target="_blank" rel="noreferrer" aria-label={`Open final video for ${item.title}`} onClick={(event) => { event.stopPropagation(); void record("drive_opened", { itemId: item.id, title: item.title }); }}><Icon name="link" size={12}/></a>}</article>)}</div><small className="english-date">{englishMonth ? nepaliCalendarLabel(month,day) : englishDateCompact(month, day)}</small></div>;
+        })}</div></div></div> : <div className="list-view">{monthVisibleItems.length ? [...monthVisibleItems].sort((a, b) => dateOrder(a.dateKey) - dateOrder(b.dateKey)).map((item) => <article className="list-item" key={item.id} onClick={() => void record("viewed", { itemId: item.id, title: item.title })}><div><span>{item.dateKey} · {item.dateKey ? (englishMonth ? nepaliFromIso(item.dateKey) : englishDate(month, Number(item.dateKey.split(" ")[1]))) : ""}</span><h3>{item.title}</h3><small>{item.type}</small></div><div><i className={`status ${statusClass(item.status)}`}>{displayStatus(item.status)}</i>{item.finalLink && <a href={item.finalLink} target="_blank" rel="noreferrer" onClick={(event) => { event.stopPropagation(); void record("drive_opened", { itemId: item.id, title: item.title }); }}><Icon name="link" size={13}/> Final video</a>}</div></article>) : <div className="empty-calendar"><h3>No items in this view</h3><p>Try another month or status.</p></div>}</div>}
       </section>
     </>}
     <footer><span>Prepared by LAYAA</span><span>Questions or changes? <a href="tel:+9779709046069">+977 9709046069</a> · <a href="https://wa.me/9779709046069" target="_blank" rel="noreferrer">WhatsApp</a></span></footer>
